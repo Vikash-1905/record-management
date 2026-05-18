@@ -5,6 +5,7 @@ require("dotenv").config();
 
 const User = require("./models/User");
 const Expense = require("./models/Expense");
+const Record = require("./models/Record");
 
 const app = express();
 
@@ -306,6 +307,241 @@ app.delete("/api/users/:id", requireDatabase, async (req, res) => {
 
     res.json({
       message: "Data deleted successfully",
+    });
+  } catch (error) {
+    sendError(res, error, "Error deleting record");
+  }
+});
+
+// ======= RECORD APIS (Grouped Records with Heading) =======
+
+// CREATE RECORD (with multiple entries)
+app.post("/api/records", requireDatabase, async (req, res) => {
+  try {
+    const address = normalizeRequiredString(req.body.address);
+    const records = req.body.records || [];
+
+    if (!address || records.length === 0) {
+      res.status(400).json({
+        message: "Address and at least one record are required.",
+      });
+      return;
+    }
+
+    // Validate each record
+    const validRecords = records.map((record) => ({
+      name: normalizeRequiredString(record.name),
+      rupees: normalizeAmount(record.rupees),
+    }));
+
+    // Check if all records have required fields
+    const hasInvalidRecords = validRecords.some(
+      (r) => !r.name || r.rupees === null
+    );
+
+    if (hasInvalidRecords) {
+      res.status(400).json({
+        message: "All records must have name and valid amount.",
+      });
+      return;
+    }
+
+    const newRecord = new Record({ address, records: validRecords });
+    const savedRecord = await newRecord.save();
+    res.json(savedRecord);
+  } catch (error) {
+    sendError(res, error, "Error saving record");
+  }
+});
+
+// READ RECORDS with Search, Filters, and Pagination
+app.get("/api/records", requireDatabase, async (req, res) => {
+  try {
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 5;
+    const search = (req.query.search || "").trim();
+    const filter = req.query.filter || "latest";
+    const date = req.query.date;
+    const minAmount = req.query.minAmount;
+    const maxAmount = req.query.maxAmount;
+
+    const skip = (page - 1) * limit;
+
+    const query = {};
+
+    if (search) {
+      const numericSearch = Number(search);
+      const searchConditions = [
+        { address: { $regex: escapeRegex(search), $options: "i" } },
+        { "records.name": { $regex: escapeRegex(search), $options: "i" } },
+      ];
+
+      if (!Number.isNaN(numericSearch)) {
+        searchConditions.push({ "records.rupees": numericSearch });
+      }
+
+      query.$or = searchConditions;
+    }
+
+    if (date) {
+      const selectedDate = new Date(date);
+      selectedDate.setHours(0, 0, 0, 0);
+      const nextDay = new Date(selectedDate);
+      nextDay.setDate(nextDay.getDate() + 1);
+
+      query.createdAt = {
+        $gte: selectedDate,
+        $lt: nextDay,
+      };
+    }
+
+    const sortOptions = {
+      latest: { createdAt: -1 },
+      oldest: { createdAt: 1 },
+    };
+
+    const recordsList = await Record.find(query)
+      .sort(sortOptions[filter] || { createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Record.countDocuments(query);
+
+    // Calculate total amount considering amount filters
+    let totalAmount = 0;
+    if (minAmount || maxAmount) {
+      const aggregateQuery = [{ $match: query }];
+
+      if (minAmount || maxAmount) {
+        aggregateQuery.push({
+          $addFields: {
+            totalPerRecord: {
+              $sum: "$records.rupees",
+            },
+          },
+        });
+      }
+
+      const result = await Record.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            totalAmount: {
+              $sum: {
+                $sum: "$records.rupees",
+              },
+            },
+          },
+        },
+      ]);
+
+      totalAmount = result[0]?.totalAmount || 0;
+
+      // Apply min/max filters to results
+      if (minAmount || maxAmount) {
+        const min = minAmount ? Number(minAmount) : 0;
+        const max = maxAmount ? Number(maxAmount) : Infinity;
+
+        recordsList.forEach((record) => {
+          record.records = record.records.filter(
+            (r) => r.rupees >= min && r.rupees <= max
+          );
+        });
+
+        total = recordsList.filter((r) => r.records.length > 0).length;
+      }
+    } else {
+      const result = await Record.aggregate([
+        { $match: query },
+        {
+          $group: {
+            _id: null,
+            totalAmount: {
+              $sum: {
+                $sum: "$records.rupees",
+              },
+            },
+          },
+        },
+      ]);
+
+      totalAmount = result[0]?.totalAmount || 0;
+    }
+
+    res.json({
+      records: recordsList,
+      totalPages: Math.ceil(total / limit),
+      currentPage: page,
+      totalRecords: total,
+      totalAmount,
+    });
+  } catch (error) {
+    sendError(res, error, "Error fetching records");
+  }
+});
+
+// UPDATE RECORD
+app.put("/api/records/:id", requireDatabase, async (req, res) => {
+  try {
+    const address = normalizeRequiredString(req.body.address);
+    const records = req.body.records || [];
+
+    if (!address || records.length === 0) {
+      res.status(400).json({
+        message: "Address and at least one record are required.",
+      });
+      return;
+    }
+
+    // Validate each record
+    const validRecords = records.map((record) => ({
+      name: normalizeRequiredString(record.name),
+      rupees: normalizeAmount(record.rupees),
+    }));
+
+    // Check if all records have required fields
+    const hasInvalidRecords = validRecords.some(
+      (r) => !r.name || r.rupees === null
+    );
+
+    if (hasInvalidRecords) {
+      res.status(400).json({
+        message: "All records must have name and valid amount.",
+      });
+      return;
+    }
+
+    const updatedRecord = await Record.findByIdAndUpdate(
+      req.params.id,
+      { address, records: validRecords },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedRecord) {
+      res.status(404).json({ message: "Record not found." });
+      return;
+    }
+
+    res.json(updatedRecord);
+  } catch (error) {
+    sendError(res, error, "Error updating record");
+  }
+});
+
+// DELETE RECORD
+app.delete("/api/records/:id", requireDatabase, async (req, res) => {
+  try {
+    const deletedRecord = await Record.findByIdAndDelete(req.params.id);
+
+    if (!deletedRecord) {
+      res.status(404).json({ message: "Record not found." });
+      return;
+    }
+
+    res.json({
+      message: "Record deleted successfully",
     });
   } catch (error) {
     sendError(res, error, "Error deleting record");

@@ -9,13 +9,18 @@ import { FaDownload, FaPlus, FaEdit, FaTrash, FaSearch } from "react-icons/fa";
 import { USERS_API } from "../config/api";
 
 function RecordManagement() {
+  // Form state for grouped records
   const [form, setForm] = useState({
-    name: "",
     address: "",
-    rupees: "",
+    records: [
+      {
+        name: "",
+        rupees: "",
+      },
+    ],
   });
 
-  const [users, setUsers] = useState([]);
+  const [groupedRecords, setGroupedRecords] = useState([]);
   const [editingId, setEditingId] = useState(null);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -30,7 +35,7 @@ function RecordManagement() {
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalAmount, setTotalAmount] = useState(0);
 
-  const API = USERS_API;
+  const API = `${USERS_API.replace("/api/users", "")}/api/records`;
   const recordsPerPage = 5;
 
   const debouncedSearch = useRef(
@@ -41,7 +46,39 @@ function RecordManagement() {
 
   useEffect(() => () => debouncedSearch.cancel(), [debouncedSearch]);
 
-  const fetchAllUsersForExport = async () => {
+  // Handle change in record field
+  const handleRecordChange = (index, field, value) => {
+    const updatedRecords = [...form.records];
+    updatedRecords[index][field] = value;
+    setForm({ ...form, records: updatedRecords });
+  };
+
+  // Add new row
+  const addRow = () => {
+    setForm({
+      ...form,
+      records: [
+        ...form.records,
+        {
+          name: "",
+          rupees: "",
+        },
+      ],
+    });
+  };
+
+  // Remove row
+  const removeRow = (index) => {
+    if (form.records.length === 1) {
+      alert("You must have at least one record entry");
+      return;
+    }
+
+    const updatedRecords = form.records.filter((_, i) => i !== index);
+    setForm({ ...form, records: updatedRecords });
+  };
+
+  const fetchAllRecordsForExport = async () => {
     const exportResponse = await axios.get(API, {
       params: {
         page: 1,
@@ -54,11 +91,11 @@ function RecordManagement() {
       },
     });
 
-    return exportResponse.data.users || [];
+    return exportResponse.data.records || [];
   };
 
   // Fetch Data
-  const fetchUsers = async (page = 1) => {
+  const fetchRecords = async (page = 1) => {
     try {
       setLoading(true);
       const res = await axios.get(API, {
@@ -72,13 +109,13 @@ function RecordManagement() {
           maxAmount,
         },
       });
-      setUsers(res.data.users);
+      setGroupedRecords(res.data.records);
       setTotalPages(res.data.totalPages);
       setCurrentPage(page);
       setTotalRecords(res.data.totalRecords);
       setTotalAmount(res.data.totalAmount || 0);
     } catch (error) {
-      console.error("Error fetching users:", error);
+      console.error("Error fetching records:", error);
     } finally {
       setLoading(false);
     }
@@ -87,35 +124,62 @@ function RecordManagement() {
   // Reset to page 1 on search/filter change
   useEffect(() => {
     setCurrentPage(1);
-    fetchUsers(1);
+    fetchRecords(1);
   }, [search, filter, selectedDate, minAmount, maxAmount]);
 
   // Add or Update
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    if (!form.name || !form.address || !form.rupees) {
-      alert("Please fill all fields");
+    if (!form.address) {
+      alert("Please enter an address");
+      return;
+    }
+
+    if (form.records.length === 0) {
+      alert("Please add at least one record");
+      return;
+    }
+
+    // Validate all records
+    const isValid = form.records.every(
+      (record) => record.name && record.rupees
+    );
+
+    if (!isValid) {
+      alert("Please fill all fields in all records");
       return;
     }
 
     try {
       setLoading(true);
 
+      const payload = {
+        address: form.address,
+        records: form.records.map((r) => ({
+          name: r.name,
+          rupees: Number(r.rupees),
+        })),
+      };
+
       if (editingId) {
-        await axios.put(`${API}/${editingId}`, form);
+        await axios.put(`${API}/${editingId}`, payload);
         setEditingId(null);
       } else {
-        await axios.post(API, form);
+        await axios.post(API, payload);
       }
 
       setForm({
-        name: "",
         address: "",
-        rupees: "",
+        records: [
+          {
+            name: "",
+            rupees: "",
+          },
+        ],
       });
 
-      fetchUsers(currentPage);
+      fetchRecords(currentPage);
     } catch (error) {
       const message =
         error.response?.data?.message || error.response?.data?.error || "Error saving data";
@@ -127,12 +191,12 @@ function RecordManagement() {
   };
 
   // Delete
-  const deleteUser = async (id) => {
-    if (window.confirm("Are you sure you want to delete this record?")) {
+  const deleteRecord = async (id) => {
+    if (window.confirm("Are you sure you want to delete this record group?")) {
       try {
         setLoading(true);
         await axios.delete(`${API}/${id}`);
-        fetchUsers(currentPage);
+        fetchRecords(currentPage);
       } catch (error) {
         console.error("Error deleting:", error);
         alert("Error deleting data");
@@ -143,17 +207,14 @@ function RecordManagement() {
   };
 
   // Edit
-  const editUser = (user) => {
+  const editRecord = (record) => {
     setForm({
-      name: user.name,
-      address: user.address,
-      rupees: user.rupees,
+      address: record.address,
+      records: record.records,
     });
-    setEditingId(user._id);
+    setEditingId(record._id);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
-
-  const visibleUsers = users;
 
   const clearFilters = () => {
     debouncedSearch.cancel();
@@ -164,7 +225,7 @@ function RecordManagement() {
     setMinAmount("");
     setMaxAmount("");
     setCurrentPage(1);
-    fetchUsers(1);
+    fetchRecords(1);
   };
 
   const renderHighlightedText = (value) => {
@@ -208,14 +269,18 @@ function RecordManagement() {
     return parts;
   };
 
+  // Calculate total for a single record group
+  const calculateTotal = (records) => {
+    return records.reduce((sum, record) => sum + Number(record.rupees || 0), 0);
+  };
+
   // PDF Download
   const downloadPDF = async () => {
     const doc = new jsPDF("l", "mm", "a4");
     const formatAmount = (value) => `Rs. ${Number(value).toLocaleString("en-IN")}`;
     const safeFileName = reportTitle.trim().replace(/[\\/:*?"<>|]+/g, "-") || "Report";
 
-    const allUsers = await fetchAllUsersForExport();
-    const total = allUsers.reduce((sum, item) => sum + Number(item.rupees), 0);
+    const allRecords = await fetchAllRecordsForExport();
 
     doc.setFontSize(22);
     doc.setTextColor(40, 40, 40);
@@ -227,58 +292,73 @@ function RecordManagement() {
 
     doc.setFontSize(13);
     doc.setTextColor(40, 40, 40);
-    doc.text(`Total Records: ${allUsers.length}`, 14, 38);
-    doc.text(`Total Amount: ${formatAmount(total)}`, 140, 38);
+    doc.text(`Total Record Groups: ${allRecords.length}`, 14, 38);
+    doc.text(`Total Amount: ${formatAmount(totalAmount)}`, 140, 38);
 
-    const tableData = allUsers.map((user, index) => [
-      index + 1,
-      user.name,
-      user.address,
-      formatAmount(user.rupees),
-      new Date(user.createdAt).toLocaleString(),
-    ]);
+    let startY = 45;
 
-    autoTable(doc, {
-      startY: 45,
-      head: [["S.No", "Name", "Address", "Amount", "Date & Time"]],
-      body: tableData,
-      theme: "grid",
-      headStyles: {
-        fillColor: [41, 98, 255],
-        textColor: 255,
-        fontSize: 12,
-        halign: "center",
-      },
-      bodyStyles: {
-        fontSize: 11,
-        textColor: 50,
-        valign: "middle",
-      },
-      alternateRowStyles: {
-        fillColor: [245, 247, 250],
-      },
-      styles: {
-        cellPadding: 4,
-      },
-      columnStyles: {
-        0: {
+    allRecords.forEach((recordGroup, groupIndex) => {
+      // Check if we need a new page
+      if (startY > 240) {
+        doc.addPage();
+        startY = 20;
+      }
+
+      // Add address
+      doc.setFontSize(12);
+      doc.setTextColor(41, 98, 255);
+      doc.text(`${recordGroup.address} (${new Date(recordGroup.createdAt).toLocaleString()})`, 14, startY);
+      startY += 8;
+
+      // Add table for this group
+      const tableData = recordGroup.records.map((record, index) => [
+        index + 1,
+        record.name,
+        formatAmount(record.rupees),
+      ]);
+
+      const total = calculateTotal(recordGroup.records);
+
+      autoTable(doc, {
+        startY,
+        head: [["S.No", "Name", "Amount"]],
+        body: tableData,
+        theme: "grid",
+        headStyles: {
+          fillColor: [41, 98, 255],
+          textColor: 255,
+          fontSize: 11,
           halign: "center",
-          cellWidth: 18,
         },
-        1: {
-          cellWidth: 35,
+        bodyStyles: {
+          fontSize: 10,
+          textColor: 50,
+          valign: "middle",
         },
-        2: {
-          cellWidth: 55,
+        alternateRowStyles: {
+          fillColor: [245, 247, 250],
         },
-        3: {
-          halign: "right",
-          cellWidth: 35,
+        columnStyles: {
+          0: {
+            halign: "center",
+            cellWidth: 18,
+          },
+          1: {
+            cellWidth: 45,
+          },
+          2: {
+            halign: "right",
+            cellWidth: 35,
+          },
         },
-        4: {
-          cellWidth: 55,
-        },
-      },
+      });
+
+      // Add total for this group
+      startY = doc.lastAutoTable.finalY + 5;
+      doc.setFontSize(10);
+      doc.setTextColor(40, 40, 40);
+      doc.text(`Subtotal: ${formatAmount(total)}`, 200, startY, { align: "right" });
+      startY += 10;
     });
 
     const pageCount = doc.internal.getNumberOfPages();
@@ -301,17 +381,8 @@ function RecordManagement() {
 
   // Excel Download
   const downloadExcel = async () => {
-    const allUsers = await fetchAllUsersForExport();
-    const total = allUsers.reduce((sum, item) => sum + Number(item.rupees), 0);
+    const allRecords = await fetchAllRecordsForExport();
     const safeFileName = reportTitle.trim().replace(/[\\/:*?"<>|]+/g, "-") || "Report";
-
-    const excelData = allUsers.map((user, index) => ({
-      "S.No": index + 1,
-      Name: user.name,
-      Address: user.address,
-      Amount: Number(user.rupees),
-      "Date & Time": new Date(user.createdAt).toLocaleString(),
-    }));
 
     const worksheet = XLSX.utils.json_to_sheet([]);
     XLSX.utils.sheet_add_aoa(worksheet, [[reportTitle]], { origin: "A1" });
@@ -322,92 +393,53 @@ function RecordManagement() {
     );
     XLSX.utils.sheet_add_aoa(
       worksheet,
-      [[`Total Records: ${allUsers.length}`, `Total Amount: Rs. ${total.toLocaleString("en-IN")}`]],
+      [[`Total Amount: Rs. ${totalAmount.toLocaleString("en-IN")}`]],
       { origin: "A3" }
     );
-    XLSX.utils.sheet_add_json(worksheet, excelData, { origin: "A5", skipHeader: false });
 
-    worksheet["!merges"] = [
-      { s: { r: 0, c: 0 }, e: { r: 0, c: 4 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 4 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 1 } },
-    ];
+    let currentRow = 5;
+
+    allRecords.forEach((recordGroup) => {
+      // Add address
+      XLSX.utils.sheet_add_aoa(
+        worksheet,
+        [[`Address: ${recordGroup.address}`, `Date: ${new Date(recordGroup.createdAt).toLocaleString()}`]],
+        { origin: `A${currentRow}` }
+      );
+      currentRow += 1;
+
+      // Add headers
+      XLSX.utils.sheet_add_aoa(
+        worksheet,
+        [["S.No", "Name", "Amount"]],
+        { origin: `A${currentRow}` }
+      );
+      currentRow += 1;
+
+      // Add records
+      const excelData = recordGroup.records.map((record, index) => [
+        index + 1,
+        record.name,
+        Number(record.rupees),
+      ]);
+
+      XLSX.utils.sheet_add_aoa(worksheet, excelData, { origin: `A${currentRow}` });
+      currentRow += excelData.length;
+
+      // Add subtotal
+      const total = calculateTotal(recordGroup.records);
+      XLSX.utils.sheet_add_aoa(worksheet, [[`Subtotal:`, "", total]], { origin: `A${currentRow}` });
+      currentRow += 2;
+    });
 
     worksheet["!cols"] = [
       { wch: 8 },
       { wch: 20 },
-      { wch: 35 },
       { wch: 15 },
-      { wch: 26 },
     ];
 
-    const setCellStyle = (cellRef, style) => {
-      if (!worksheet[cellRef]) return;
-      worksheet[cellRef].s = style;
-    };
-
-    const titleStyle = {
-      font: { bold: true, color: { rgb: "FFFFFF" }, sz: 16 },
-      fill: { patternType: "solid", fgColor: { rgb: "2563EB" } },
-      alignment: { horizontal: "center", vertical: "center" },
-    };
-
-    const summaryStyle = {
-      font: { bold: true, color: { rgb: "1F2937" }, sz: 11 },
-      fill: { patternType: "solid", fgColor: { rgb: "DBEAFE" } },
-      alignment: { horizontal: "left", vertical: "center" },
-    };
-
-    const headerStyle = {
-      font: { bold: true, color: { rgb: "FFFFFF" } },
-      fill: { patternType: "solid", fgColor: { rgb: "2563EB" } },
-      alignment: { horizontal: "center", vertical: "center" },
-      border: {
-        top: { style: "thin", color: { rgb: "FFFFFF" } },
-        bottom: { style: "thin", color: { rgb: "FFFFFF" } },
-        left: { style: "thin", color: { rgb: "FFFFFF" } },
-        right: { style: "thin", color: { rgb: "FFFFFF" } },
-      },
-    };
-
-    const bodyStyle = {
-      font: { color: { rgb: "111827" } },
-      alignment: { vertical: "center" },
-      border: {
-        top: { style: "thin", color: { rgb: "D1D5DB" } },
-        bottom: { style: "thin", color: { rgb: "D1D5DB" } },
-        left: { style: "thin", color: { rgb: "D1D5DB" } },
-        right: { style: "thin", color: { rgb: "D1D5DB" } },
-      },
-    };
-
-    setCellStyle("A1", titleStyle);
-    setCellStyle("A2", {
-      font: { italic: true, color: { rgb: "4B5563" } },
-      alignment: { horizontal: "left", vertical: "center" },
-    });
-    setCellStyle("A3", summaryStyle);
-    setCellStyle("B3", summaryStyle);
-    setCellStyle("C3", summaryStyle);
-    setCellStyle("D3", summaryStyle);
-    setCellStyle("E3", summaryStyle);
-
-    ["A5", "B5", "C5", "D5", "E5"].forEach((cellRef) => {
-      setCellStyle(cellRef, headerStyle);
-    });
-
-    for (let rowIndex = 6; rowIndex < 6 + excelData.length; rowIndex++) {
-      ["A", "B", "C", "D", "E"].forEach((column) => {
-        const cellRef = `${column}${rowIndex}`;
-        setCellStyle(cellRef, bodyStyle);
-      });
-      if (worksheet[`D${rowIndex}`]) {
-        worksheet[`D${rowIndex}`].z = '"Rs." #,##0';
-      }
-    }
-
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Report");
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Records");
 
     const excelBuffer = XLSX.write(workbook, {
       bookType: "xlsx",
@@ -430,7 +462,7 @@ function RecordManagement() {
           <h1 className="text-4xl md:text-5xl font-bold bg-linear-to-r from-blue-600 to-green-600 bg-clip-text text-transparent mb-2">
             💰 Record Management
           </h1>
-          <p className="text-gray-600">Professional Financial Management System</p>
+          <p className="text-gray-600">Professional Financial Management with Grouped Records</p>
         </div>
 
         {/* Main Card */}
@@ -439,7 +471,7 @@ function RecordManagement() {
           {/* Dashboard Stats */}
           <div className="grid md:grid-cols-3 gap-4 mb-8">
             <div className="bg-linear-to-br from-blue-500 to-blue-600 text-white p-6 rounded-2xl shadow-lg hover:shadow-xl transition-shadow">
-              <h3 className="text-sm font-semibold opacity-90">Total Records</h3>
+              <h3 className="text-sm font-semibold opacity-90">Total Groups</h3>
               <h2 className="text-3xl font-bold mt-2">{totalRecords}</h2>
             </div>
 
@@ -455,42 +487,83 @@ function RecordManagement() {
           </div>
 
           {/* Form Section */}
-          <form onSubmit={handleSubmit} className="grid md:grid-cols-4 gap-3 mb-6 p-6 bg-gray-50 rounded-2xl">
-            <input
-              type="text"
-              placeholder="Name"
-              className="border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none transition"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              required
-            />
+          <form onSubmit={handleSubmit} className="mb-6 p-6 bg-gray-50 rounded-2xl">
+            {/* Address Input */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">
+                📍 Address (e.g., Office, Delhi, Branch-2)
+              </label>
+              <input
+                type="text"
+                placeholder="Enter Address"
+                className="border-2 border-gray-300 p-3 rounded-lg w-full focus:border-blue-500 focus:outline-none transition"
+                value={form.address}
+                onChange={(e) => setForm({ ...form, address: e.target.value })}
+                required
+              />
+            </div>
 
-            <input
-              type="text"
-              placeholder="Address"
-              className="border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none transition"
-              value={form.address}
-              onChange={(e) => setForm({ ...form, address: e.target.value })}
-              required
-            />
+            {/* Records List */}
+            <div className="mb-6">
+              <label className="block text-sm font-semibold text-gray-700 mb-3">
+                📋 Records ({form.records.length})
+              </label>
 
-            <input
-              type="number"
-              placeholder="Rupees"
-              className="border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none transition"
-              value={form.rupees}
-              onChange={(e) => setForm({ ...form, rupees: e.target.value })}
-              required
-            />
+              <div className="space-y-3">
+                {form.records.map((record, index) => (
+                  <div
+                    key={index}
+                    className="grid md:grid-cols-3 gap-3 p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-300 transition"
+                  >
+                    <input
+                      type="text"
+                      placeholder="Name"
+                      className="border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none transition"
+                      value={record.name}
+                      onChange={(e) => handleRecordChange(index, "name", e.target.value)}
+                      required
+                    />
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="bg-linear-to-r from-blue-500 to-indigo-600 text-white px-5 py-3 rounded-lg hover:scale-105 transition-all duration-300 font-semibold shadow-lg disabled:opacity-50"
-            >
-              <FaPlus className="inline mr-2" />
-              {loading ? "Saving..." : editingId ? "Update" : "Add"}
-            </button>
+                    <input
+                      type="number"
+                      placeholder="Rupees"
+                      className="border-2 border-gray-300 p-3 rounded-lg focus:border-blue-500 focus:outline-none transition"
+                      value={record.rupees}
+                      onChange={(e) => handleRecordChange(index, "rupees", e.target.value)}
+                      required
+                    />
+
+                    <button
+                      type="button"
+                      onClick={() => removeRow(index)}
+                      className="bg-red-500 text-white px-3 py-3 rounded-lg hover:bg-red-600 transition font-semibold"
+                    >
+                      <FaTrash className="inline" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={addRow}
+                  className="bg-green-500 text-white px-5 py-3 rounded-lg hover:bg-green-600 transition font-semibold shadow-lg"
+                >
+                  <FaPlus className="inline mr-2" />
+                  Add More Row
+                </button>
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="bg-linear-to-r from-blue-500 to-indigo-600 text-white px-5 py-3 rounded-lg hover:scale-105 transition-all duration-300 font-semibold shadow-lg disabled:opacity-50"
+              >
+                <FaPlus className="inline mr-2" />
+                {loading ? "Saving..." : editingId ? "Update Group" : "Save Records"}
+              </button>
+            </div>
           </form>
 
           {/* Search and Filter */}
@@ -499,7 +572,7 @@ function RecordManagement() {
               <FaSearch className="absolute left-3 top-3 text-gray-400 text-lg" />
               <input
                 type="text"
-                placeholder="Search name, address, or amount..."
+                placeholder="Search address, name, or amount..."
                 className="border-2 border-gray-300 p-3 pl-10 rounded-lg w-full focus:border-blue-500 focus:outline-none transition"
                 value={searchInput}
                 onChange={(e) => {
@@ -516,8 +589,6 @@ function RecordManagement() {
             >
               <option value="latest">📅 Latest First</option>
               <option value="oldest">📅 Oldest First</option>
-              <option value="high">💹 High Amount</option>
-              <option value="low">📉 Low Amount</option>
             </select>
           </div>
 
@@ -548,7 +619,7 @@ function RecordManagement() {
 
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
             <p className="text-gray-600">
-              Found <span className="font-semibold text-blue-600">{totalRecords}</span> records
+              Found <span className="font-semibold text-blue-600">{totalRecords}</span> record groups
             </p>
 
             <button
@@ -570,7 +641,7 @@ function RecordManagement() {
             />
           </div>
 
-          {/* Download PDF Button */}
+          {/* Download Buttons */}
           <div className="flex flex-wrap gap-4 mt-4 mb-6">
             <button
               onClick={downloadPDF}
@@ -593,59 +664,87 @@ function RecordManagement() {
 
           {/* Records Display */}
           <div>
-            {loading && visibleUsers.length === 0 ? (
+            {loading && groupedRecords.length === 0 ? (
               <div className="text-center py-12">
                 <div className="inline-block animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
                 <p className="text-gray-600 mt-4">Loading...</p>
               </div>
-            ) : visibleUsers.length === 0 ? (
+            ) : groupedRecords.length === 0 ? (
               <div className="text-center py-12 bg-gray-50 rounded-2xl">
                 <h2 className="text-2xl font-bold text-gray-800">No Records Found</h2>
-                <p className="text-gray-500 mt-2">Try different search or filters</p>
+                <p className="text-gray-500 mt-2">Create your first record group above</p>
               </div>
             ) : (
               <div className="grid gap-4">
-                {visibleUsers.map((user) => (
-                  <div
-                    key={user._id}
-                    className="bg-white rounded-2xl shadow-lg p-6 hover:shadow-2xl transition-all duration-300 border-l-4 border-blue-500"
-                  >
-                    <div className="grid md:grid-cols-2 gap-4 mb-4">
-                      <div>
-                        <h3 className="text-xl font-bold text-gray-800">
-                          {renderHighlightedText(user.name)}
+                {groupedRecords.map((recordGroup) => {
+                  const groupTotal = calculateTotal(recordGroup.records);
+                  return (
+                    <div
+                      key={recordGroup._id}
+                      className="bg-white rounded-2xl shadow-lg p-6 hover:shadow-2xl transition-all duration-300 border-l-4 border-blue-500"
+                    >
+                      {/* Group Header */}
+                      <div className="mb-4 pb-4 border-b-2 border-gray-200">
+                        <h3 className="text-2xl font-bold text-gray-800">
+                          📍 {renderHighlightedText(recordGroup.address)}
                         </h3>
-                        <p className="text-gray-600 mt-1">{renderHighlightedText(user.address)}</p>
-                      </div>
-                      <div className="text-right">
-                        <p className="font-bold text-2xl text-green-600">
-                          {renderHighlightedText(`₹ ${Number(user.rupees).toLocaleString()}`)}
-                        </p>
                         <p className="text-xs text-gray-500 mt-1">
-                          {new Date(user.createdAt).toLocaleString()}
+                          {new Date(recordGroup.createdAt).toLocaleString()}
                         </p>
                       </div>
-                    </div>
 
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        onClick={() => editUser(user)}
-                        className="bg-linear-to-r from-yellow-400 to-yellow-500 text-white px-4 py-2 rounded-lg hover:scale-110 transition-all duration-300 font-semibold shadow-md"
-                      >
-                        <FaEdit className="inline mr-2" />
-                        Edit
-                      </button>
+                      {/* Records Table */}
+                      <div className="mb-4 overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="bg-gray-100 border-b-2 border-gray-300">
+                              <th className="p-2 text-left font-semibold">S.No</th>
+                              <th className="p-2 text-left font-semibold">Name</th>
+                              <th className="p-2 text-right font-semibold">Amount</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {recordGroup.records.map((record, idx) => (
+                              <tr key={idx} className="border-b hover:bg-blue-50">
+                                <td className="p-2 text-center">{idx + 1}</td>
+                                <td className="p-2">{renderHighlightedText(record.name)}</td>
+                                <td className="p-2 text-right font-semibold text-green-600">
+                                  {renderHighlightedText(`₹ ${Number(record.rupees).toLocaleString()}`)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
 
-                      <button
-                        onClick={() => deleteUser(user._id)}
-                        className="bg-linear-to-r from-red-500 to-red-600 text-white px-4 py-2 rounded-lg hover:scale-110 transition-all duration-300 font-semibold shadow-md"
-                      >
-                        <FaTrash className="inline mr-2" />
-                        Delete
-                      </button>
+                      {/* Group Total */}
+                      <div className="mb-4 p-4 bg-green-50 rounded-lg border-l-4 border-green-500">
+                        <p className="text-right text-lg font-bold text-green-700">
+                          Total: ₹ {Number(groupTotal).toLocaleString()}
+                        </p>
+                      </div>
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2 flex-wrap">
+                        <button
+                          onClick={() => editRecord(recordGroup)}
+                          className="bg-linear-to-r from-yellow-400 to-yellow-500 text-white px-4 py-2 rounded-lg hover:scale-110 transition-all duration-300 font-semibold shadow-md"
+                        >
+                          <FaEdit className="inline mr-2" />
+                          Edit
+                        </button>
+
+                        <button
+                          onClick={() => deleteRecord(recordGroup._id)}
+                          className="bg-linear-to-r from-red-500 to-red-600 text-white px-4 py-2 rounded-lg hover:scale-110 transition-all duration-300 font-semibold shadow-md"
+                        >
+                          <FaTrash className="inline mr-2" />
+                          Delete
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
@@ -653,7 +752,7 @@ function RecordManagement() {
             {totalRecords > 0 && totalPages > 1 && (
               <div className="flex justify-center items-center gap-2 mt-8 flex-wrap">
                 <button
-                  onClick={() => fetchUsers(currentPage - 1)}
+                  onClick={() => fetchRecords(currentPage - 1)}
                   disabled={currentPage === 1}
                   className="bg-linear-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg hover:scale-105 transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -663,7 +762,7 @@ function RecordManagement() {
                 {[...Array(totalPages)].map((_, index) => (
                   <button
                     key={index}
-                    onClick={() => fetchUsers(index + 1)}
+                    onClick={() => fetchRecords(index + 1)}
                     className={`px-4 py-2 rounded-lg font-semibold transition-all duration-300 ${
                       currentPage === index + 1
                         ? "bg-linear-to-r from-blue-600 to-indigo-600 text-white shadow-lg"
@@ -675,7 +774,7 @@ function RecordManagement() {
                 ))}
 
                 <button
-                  onClick={() => fetchUsers(currentPage + 1)}
+                  onClick={() => fetchRecords(currentPage + 1)}
                   disabled={currentPage === totalPages}
                   className="bg-linear-to-r from-blue-500 to-blue-600 text-white px-4 py-2 rounded-lg hover:scale-105 transition-all duration-300 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
                 >
@@ -687,7 +786,7 @@ function RecordManagement() {
             {/* Pagination Info */}
             {totalRecords > 0 && (
               <div className="text-center mt-6 text-gray-600">
-                <p>Page <span className="font-bold text-blue-600">{currentPage}</span> of <span className="font-bold text-blue-600">{totalPages}</span> | Total Records: <span className="font-bold text-green-600">{totalRecords}</span></p>
+                <p>Page <span className="font-bold text-blue-600">{currentPage}</span> of <span className="font-bold text-blue-600">{totalPages}</span> | Total Groups: <span className="font-bold text-green-600">{totalRecords}</span></p>
               </div>
             )}
           </div>
