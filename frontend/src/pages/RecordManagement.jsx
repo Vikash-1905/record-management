@@ -29,7 +29,7 @@ function RecordManagement() {
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalAmount, setTotalAmount] = useState(0);
 
-  const API = import.meta.env.VITE_API_URL;
+  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api/users";
   const recordsPerPage = 5;
 
   const debouncedSearch = useRef(

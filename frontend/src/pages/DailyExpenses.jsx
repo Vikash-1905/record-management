@@ -15,7 +15,7 @@ function DailyExpenses() {
   const [loading, setLoading] = useState(false);
   const [totalExpense, setTotalExpense] = useState(0);
 
-  const API = import.meta.env.VITE_API_URL;
+  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api/users";
   const EXPENSE_API = API.replace("/api/users", "/api/expenses");
 
   // Fetch expenses
