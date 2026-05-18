@@ -10,6 +10,63 @@ const app = express();
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PORT = process.env.PORT || 5000;
+const dbStateName = (state) =>
+  ({
+    0: "disconnected",
+    1: "connected",
+    2: "connecting",
+    3: "disconnecting",
+  }[state] || "unknown");
+
+const getDatabaseStatus = () => ({
+  state: mongoose.connection.readyState,
+  status: dbStateName(mongoose.connection.readyState),
+});
+
+const requireDatabase = (req, res, next) => {
+  if (mongoose.connection.readyState === 1) {
+    next();
+    return;
+  }
+
+  res.status(503).json({
+    message:
+      "Database is not connected. Check MONGO_URI in Render and MongoDB Atlas Network Access.",
+    database: getDatabaseStatus(),
+  });
+};
+
+const sendError = (res, error, fallbackMessage = "Server error") => {
+  console.error(fallbackMessage, error);
+
+  if (error.name === "ValidationError") {
+    res.status(400).json({
+      message: "Please check the form fields and try again.",
+      error: error.message,
+    });
+    return;
+  }
+
+  if (error.name === "CastError") {
+    res.status(400).json({
+      message: "Invalid data format.",
+      error: error.message,
+    });
+    return;
+  }
+
+  res.status(500).json({
+    message: fallbackMessage,
+    error: error.message,
+  });
+};
+
+const normalizeAmount = (value) => {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : null;
+};
+
+const normalizeRequiredString = (value) => String(value ?? "").trim();
 const normalizeOrigin = (origin) => {
   if (!origin || origin === "*") {
     return origin;
@@ -80,29 +137,45 @@ if (!process.env.MONGO_URI) {
   console.error("MONGO_URI is missing. Add it to your environment variables.");
 } else {
   mongoose
-    .connect(process.env.MONGO_URI)
+    .connect(process.env.MONGO_URI, {
+      serverSelectionTimeoutMS: 10000,
+    })
     .then(() => console.log("MongoDB Connected"))
-    .catch((err) => console.log(err));
+    .catch((err) => console.error("MongoDB connection error:", err));
 }
 
 app.get("/health", (req, res) => {
-  res.json({ status: "ok" });
+  res.json({
+    status: "ok",
+    database: getDatabaseStatus(),
+  });
 });
 
 // CREATE
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", requireDatabase, async (req, res) => {
   try {
-    const newUser = new User(req.body);
+    const name = normalizeRequiredString(req.body.name);
+    const address = normalizeRequiredString(req.body.address);
+    const rupees = normalizeAmount(req.body.rupees);
+
+    if (!name || !address || rupees === null) {
+      res.status(400).json({
+        message: "Name, address, and a valid amount are required.",
+      });
+      return;
+    }
+
+    const newUser = new User({ name, address, rupees });
     const savedUser = await newUser.save();
     res.json(savedUser);
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error saving record");
   }
 });
 
 
 // READ with Search, Filters, and Pagination
-app.get("/api/users", async (req, res) => {
+app.get("/api/users", requireDatabase, async (req, res) => {
   try {
     const page = Number(req.query.page) || 1;
     const limit = Number(req.query.limit) || 5;
@@ -186,84 +259,139 @@ app.get("/api/users", async (req, res) => {
       totalAmount: totalAmountResult[0]?.totalAmount || 0,
     });
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error fetching records");
   }
 });
 
 // UPDATE
-app.put("/api/users/:id", async (req, res) => {
+app.put("/api/users/:id", requireDatabase, async (req, res) => {
   try {
+    const name = normalizeRequiredString(req.body.name);
+    const address = normalizeRequiredString(req.body.address);
+    const rupees = normalizeAmount(req.body.rupees);
+
+    if (!name || !address || rupees === null) {
+      res.status(400).json({
+        message: "Name, address, and a valid amount are required.",
+      });
+      return;
+    }
+
     const updatedUser = await User.findByIdAndUpdate(
       req.params.id,
-      req.body,
-      { new: true }
+      { name, address, rupees },
+      { new: true, runValidators: true }
     );
+
+    if (!updatedUser) {
+      res.status(404).json({ message: "Record not found." });
+      return;
+    }
 
     res.json(updatedUser);
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error updating record");
   }
 });
 
 // DELETE
-app.delete("/api/users/:id", async (req, res) => {
+app.delete("/api/users/:id", requireDatabase, async (req, res) => {
   try {
-    await User.findByIdAndDelete(req.params.id);
+    const deletedUser = await User.findByIdAndDelete(req.params.id);
+
+    if (!deletedUser) {
+      res.status(404).json({ message: "Record not found." });
+      return;
+    }
 
     res.json({
       message: "Data deleted successfully",
     });
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error deleting record");
   }
 });
 
 // ======= EXPENSE APIS =======
 
 // CREATE EXPENSE
-app.post("/api/expenses", async (req, res) => {
+app.post("/api/expenses", requireDatabase, async (req, res) => {
   try {
-    const expense = new Expense(req.body);
+    const title = normalizeRequiredString(req.body.title);
+    const category = normalizeRequiredString(req.body.category);
+    const amount = normalizeAmount(req.body.amount);
+
+    if (!title || !category || amount === null) {
+      res.status(400).json({
+        message: "Title, category, and a valid amount are required.",
+      });
+      return;
+    }
+
+    const expense = new Expense({ title, amount, category });
     const savedExpense = await expense.save();
     res.json(savedExpense);
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error saving expense");
   }
 });
 
 // GET ALL EXPENSES
-app.get("/api/expenses", async (req, res) => {
+app.get("/api/expenses", requireDatabase, async (req, res) => {
   try {
     const expenses = await Expense.find().sort({ createdAt: -1 });
     res.json(expenses);
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error fetching expenses");
   }
 });
 
 // UPDATE EXPENSE
-app.put("/api/expenses/:id", async (req, res) => {
+app.put("/api/expenses/:id", requireDatabase, async (req, res) => {
   try {
+    const title = normalizeRequiredString(req.body.title);
+    const category = normalizeRequiredString(req.body.category);
+    const amount = normalizeAmount(req.body.amount);
+
+    if (!title || !category || amount === null) {
+      res.status(400).json({
+        message: "Title, category, and a valid amount are required.",
+      });
+      return;
+    }
+
     const updatedExpense = await Expense.findByIdAndUpdate(
       req.params.id,
-      req.body,
-      { new: true }
+      { title, amount, category },
+      { new: true, runValidators: true }
     );
+
+    if (!updatedExpense) {
+      res.status(404).json({ message: "Expense not found." });
+      return;
+    }
+
     res.json(updatedExpense);
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error updating expense");
   }
 });
 
 // DELETE EXPENSE
-app.delete("/api/expenses/:id", async (req, res) => {
+app.delete("/api/expenses/:id", requireDatabase, async (req, res) => {
   try {
-    await Expense.findByIdAndDelete(req.params.id);
+    const deletedExpense = await Expense.findByIdAndDelete(req.params.id);
+
+    if (!deletedExpense) {
+      res.status(404).json({ message: "Expense not found." });
+      return;
+    }
+
     res.json({
       message: "Expense deleted successfully",
     });
   } catch (error) {
-    res.status(500).json(error);
+    sendError(res, error, "Error deleting expense");
   }
 });
 

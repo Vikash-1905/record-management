@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import axios from "axios";
 import { FaPlus, FaTrash, FaEdit } from "react-icons/fa";
+import { EXPENSES_API } from "../config/api";
 
 function DailyExpenses() {
   const [expense, setExpense] = useState({
@@ -15,8 +16,7 @@ function DailyExpenses() {
   const [loading, setLoading] = useState(false);
   const [totalExpense, setTotalExpense] = useState(0);
 
-  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api/users";
-  const EXPENSE_API = API.replace("/api/users", "/api/expenses");
+  const EXPENSE_API = EXPENSES_API;
 
   // Fetch expenses
   const fetchExpenses = async () => {
@@ -75,8 +75,10 @@ function DailyExpenses() {
 
       fetchExpenses();
     } catch (error) {
-      console.error("Error saving:", error);
-      alert("Error saving expense");
+      const message =
+        error.response?.data?.message || error.response?.data?.error || "Error saving expense";
+      console.error("Error saving:", error.response?.data || error);
+      alert(message);
     } finally {
       setLoading(false);
     }

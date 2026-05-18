@@ -6,6 +6,7 @@ import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
 import { debounce } from "lodash";
 import { FaDownload, FaPlus, FaEdit, FaTrash, FaSearch } from "react-icons/fa";
+import { USERS_API } from "../config/api";
 
 function RecordManagement() {
   const [form, setForm] = useState({
@@ -29,7 +30,7 @@ function RecordManagement() {
   const [totalRecords, setTotalRecords] = useState(0);
   const [totalAmount, setTotalAmount] = useState(0);
 
-  const API = import.meta.env.VITE_API_URL || "http://localhost:5000/api/users";
+  const API = USERS_API;
   const recordsPerPage = 5;
 
   const debouncedSearch = useRef(
@@ -116,8 +117,10 @@ function RecordManagement() {
 
       fetchUsers(currentPage);
     } catch (error) {
-      console.error("Error saving:", error);
-      alert("Error saving data");
+      const message =
+        error.response?.data?.message || error.response?.data?.error || "Error saving data";
+      console.error("Error saving:", error.response?.data || error);
+      alert(message);
     } finally {
       setLoading(false);
     }
