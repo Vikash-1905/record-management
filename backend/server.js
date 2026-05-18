@@ -10,28 +10,70 @@ const app = express();
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const PORT = process.env.PORT || 5000;
-const allowedOrigins = (process.env.CLIENT_ORIGINS || process.env.FRONTEND_URL || "")
-  .split(",")
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+const normalizeOrigin = (origin) => {
+  if (!origin || origin === "*") {
+    return origin;
+  }
 
-app.use(
-  cors(
-    allowedOrigins.length
-      ? {
-          origin(origin, callback) {
-            if (!origin || allowedOrigins.includes(origin)) {
-              callback(null, true);
-              return;
-            }
+  try {
+    return new URL(origin).origin;
+  } catch {
+    return origin.replace(/\/+$/, "");
+  }
+};
 
-            callback(new Error("Not allowed by CORS"));
-          },
-          credentials: true,
-        }
-      : undefined
-  )
+const allowedOrigins = new Set(
+  (process.env.CLIENT_ORIGINS || process.env.FRONTEND_URL || "")
+    .split(/[,\s]+/)
+    .map((origin) => normalizeOrigin(origin.trim()))
+    .filter(Boolean)
 );
+
+const isAllowedOrigin = (origin) => {
+  if (!origin || allowedOrigins.size === 0 || allowedOrigins.has("*")) {
+    return true;
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (allowedOrigins.has(normalizedOrigin)) {
+    return true;
+  }
+
+  try {
+    const { hostname, protocol } = new URL(normalizedOrigin);
+    const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+    const isVercelApp =
+      process.env.ALLOW_VERCEL_PREVIEWS !== "false" &&
+      protocol === "https:" &&
+      hostname.endsWith(".vercel.app");
+
+    return isLocalhost || isVercelApp;
+  } catch {
+    return false;
+  }
+};
+
+const allowedOriginsForLog = [...allowedOrigins].join(", ") || "all origins";
+
+console.log(`CORS allowed origins: ${allowedOriginsForLog}`);
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+
+    console.warn(
+      `Blocked by CORS: ${origin}. Add this exact frontend origin to CLIENT_ORIGINS in Render.`
+    );
+    callback(null, false);
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
 if (!process.env.MONGO_URI) {
@@ -225,6 +267,8 @@ app.delete("/api/expenses/:id", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+
+module.exports = { app, server };
